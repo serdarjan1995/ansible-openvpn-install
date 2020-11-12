@@ -1,0 +1,277 @@
+---
+- name: "[servers] Add apt package signing key for OpenVpn"
+  become: yes
+  apt_key:
+    url: https://swupdate.openvpn.net/repos/repo-public.gpg
+    state: present
+
+- name: "[servers] Add openvpn repository"
+  become: yes
+  shell: echo "deb http://build.openvpn.net/debian/openvpn/{{open_vpn_version}} $(lsb_release -cs) main" > /etc/apt/sources.list.d/openvpn-aptrepo.list
+
+- name: "[servers] Run apt update and install OpenVpn"
+  become: yes
+  apt:
+    update_cache: yes
+    name: openvpn
+    state: present
+
+- name: "[servers] Adding new group as {{ open_vpn_user }}"
+  become: yes
+  group:
+    name: "{{ open_vpn_user }}"
+    state: present
+    
+- name: "[servers] Adding new user {{ open_vpn_user }}"
+  become: yes
+  user:
+    name: "{{ open_vpn_user }}"
+    group: "{{ open_vpn_user }}"
+    groups: "{{ open_vpn_user }}, sudo"
+    append: yes
+    shell: /bin/bash
+    state: present
+
+- name: "[servers] Change ownership of /etc/openvpn to {{ open_vpn_user }}"
+  become: yes
+  file:
+    dest: /etc/openvpn
+    owner: "{{ open_vpn_user }}"
+    group: "{{ open_vpn_user }}"
+    recurse: yes
+
+- name: "[local] Creates directory easy-rsa for CA server"
+  delegate_to: localhost
+  file:
+    path: "{{ easy_rsa_local_path }}/easy-rsa"
+    state: directory
+
+- name: "[local] Downloading easy-rsa"
+  delegate_to: localhost
+  get_url:
+    url: "{{ easy_rsa_link }}"
+    dest: "{{ easy_rsa_local_path }}/{{ easy_rsa_arhive_name }}"
+    
+- name: "[local] Extract {{ easy_rsa_arhive_name }} into {{ easy_rsa_local_path }}/easy-rsa"
+  delegate_to: localhost
+  shell:
+    cmd: "tar -zxf {{ easy_rsa_local_path }}/{{ easy_rsa_arhive_name }} -C {{ easy_rsa_local_path }}/easy-rsa --strip 1"
+    warn: false
+
+- name: "[local] Copy easy-rsa enviroment files"
+  delegate_to: localhost
+  copy:
+    src: "{{ easy_rsa_vars }}"
+    dest: "{{ easy_rsa_local_path }}/easy-rsa/vars"
+
+- name: "[local] Setting PKI location"
+  delegate_to: localhost
+  shell:
+    cmd: echo >> {{ easy_rsa_local_path }}/easy-rsa/vars "set_var EASYRSA_PKI		{{ easy_rsa_local_path }}/easy-rsa/pki"
+    
+- name: "[local] Initializng easy-rsa pki"
+  delegate_to: localhost
+  expect:
+    command: "{{ easy_rsa_local_path }}/easy-rsa/easyrsa init-pki"
+    responses:
+      'Confirm removal: ': 'yes'
+    
+- name: "[local] Building CA without password"
+  delegate_to: localhost
+  expect:
+    command: "{{ easy_rsa_local_path }}/easy-rsa/easyrsa build-ca nopass"
+    responses:
+      'Common Name \(eg: your user, host, or server name\) \[Easy-RSA CA\]:': ''
+
+- name: "[servers] Copying CA certificate to remote hosts"
+  become: yes
+  become_user: "{{ open_vpn_user }}"
+  copy:
+    src: "{{ easy_rsa_local_path }}/easy-rsa/pki/ca.crt"
+    dest: /etc/openvpn/
+
+- name: "[servers] Create directory easy-rsa"
+  become: yes
+  become_user: "{{ open_vpn_user }}"
+  file:
+    path: "/home/{{ open_vpn_user }}/easy-rsa"
+    state: directory
+    owner: "{{ open_vpn_user }}"
+    group: "{{ open_vpn_user }}"
+    mode: 0770
+
+- name: "[servers] Downloading easy-rsa"
+  become: yes
+  become_user: "{{ open_vpn_user }}"
+  get_url:
+    url: "{{ easy_rsa_link }}"
+    dest: "/home/{{ open_vpn_user }}/{{ easy_rsa_arhive_name }}"
+    
+- name: "[servers] Extract {{ easy_rsa_arhive_name }} into /home/{{ open_vpn_user }}/easy-rsa"
+  become: yes
+  become_user: "{{ open_vpn_user }}"
+  shell:
+    cmd: "tar -zxf /home/{{ open_vpn_user }}/{{ easy_rsa_arhive_name }} -C /home/{{ open_vpn_user }}/easy-rsa --strip 1"
+    warn: false
+
+- name: "[servers] Copy easy-rsa enviroment files"
+  become: yes
+  become_user: "{{ open_vpn_user }}"
+  copy:
+    src: "{{ easy_rsa_vars }}"
+    dest: "/home/{{ open_vpn_user }}/easy-rsa/vars"
+
+- name: "[servers] Assigning PKI location"
+  become: yes
+  become_user: "{{ open_vpn_user }}"
+  shell:
+    cmd: echo >> /home/{{ open_vpn_user }}/easy-rsa/vars "set_var EASYRSA_PKI		/home/{{ open_vpn_user }}/easy-rsa/pki"
+    
+- name: "[servers] Initializng easy-rsa pki"
+  become: yes
+  become_user: "{{ open_vpn_user }}"
+  expect:
+    command: "/home/{{ open_vpn_user }}/easy-rsa/easyrsa init-pki"
+    responses:
+      'Confirm removal: ': 'yes'
+
+- name: "[servers] Generating server keys"
+  become: yes
+  become_user: "{{ open_vpn_user }}"
+  expect:
+    command: "/home/{{ open_vpn_user }}/easy-rsa/easyrsa gen-req server nopass"
+    responses:
+      'Common Name \(eg: your user, host, or server name\) *': ''
+  
+- name: "[servers] Copy server keys to /etc/openvpn"
+  become: yes
+  become_user: "{{ open_vpn_user }}"
+  copy:
+    src: "/home/{{ open_vpn_user }}/easy-rsa/pki/private/server.key"
+    dest: /etc/openvpn/
+    remote_src: yes
+    
+- name: "[servers] Prepare server reqs"
+  become: yes
+  become_user: "{{ open_vpn_user }}"
+  copy:
+    src: "/home/{{ open_vpn_user }}/easy-rsa/pki/reqs/server.req"
+    dest: "/home/{{ open_vpn_user }}/"
+    remote_src: yes
+    
+- name: "[local] Fetching certificate reqs from remote nodes"
+  fetch:
+    src: "/home/{{ open_vpn_user }}/server.req"
+    dest: "fetched/server/{{ inventory_hostname }}.req"
+    flat: yes
+    
+- name: "[local] Importing certificate reqs"
+  delegate_to: localhost
+  command:
+    cmd: "{{ easy_rsa_local_path }}/easy-rsa/easyrsa import-req fetched/server/{{ item }}.req {{ item }}"
+  loop: "{{ groups['servers'] }}"
+  
+- name: "[local] Signing certificate reqs"
+  delegate_to: localhost
+  expect:
+    command: "{{ easy_rsa_local_path }}/easy-rsa/easyrsa sign-req server {{ item }}"
+    responses:
+      '  Confirm request details: ': 'yes'
+  loop: "{{ groups['servers'] }}"
+  
+- name: "[servers] Copying signed server certificates to remote hosts"
+  become: yes
+  become_user: "{{ open_vpn_user }}"
+  copy:
+    src: "{{ easy_rsa_local_path }}/easy-rsa/pki/issued/{{ item }}.crt"
+    dest: /etc/openvpn/server.crt
+  loop: "{{ groups['servers'] }}"
+  
+- name: "[servers] Generating Diffie-Hellman params"
+  become: yes
+  become_user: "{{ open_vpn_user }}"
+  command: "/home/{{ open_vpn_user }}/easy-rsa/easyrsa gen-dh"
+  
+- name: "[servers] Generating HMAC signature for TLS integrity verification"
+  become: yes
+  become_user: "{{ open_vpn_user }}"
+  command: openvpn --genkey secret /etc/openvpn/ta.key
+
+- name: "[servers] Create client-configs directory"
+  become: yes
+  become_user: "{{ open_vpn_user }}"
+  file:
+    path: "/home/{{ open_vpn_user }}/client-configs/keys"
+    state: directory
+    owner: "{{ open_vpn_user }}"
+    group: "{{ open_vpn_user }}"
+    mode: 0700
+    recurse: yes
+    
+- name: "[servers] Generating client keys"
+  become: yes
+  become_user: "{{ open_vpn_user }}"
+  expect:
+    command: "/home/{{ open_vpn_user }}/easy-rsa/easyrsa gen-req client1 nopass"
+    responses:
+      'Common Name \(eg: your user, host, or server name\) *': ''
+      
+- name: "[servers] Copy client keys to /home/{{ open_vpn_user }}/client-configs/keys dir"
+  become: yes
+  become_user: "{{ open_vpn_user }}"
+  copy:
+    src: "/home/{{ open_vpn_user }}/easy-rsa/pki/private/client1.key"
+    dest: "/home/{{ open_vpn_user }}/client-configs/keys"
+    remote_src: yes
+
+- name: "[servers] Prepare client reqs"
+  become: yes
+  become_user: "{{ open_vpn_user }}"
+  copy:
+    src: "/home/{{ open_vpn_user }}/easy-rsa/pki/reqs/client1.req"
+    dest: "/home/{{ open_vpn_user }}/"
+    remote_src: yes
+    
+- name: "[local] Fetching certificate reqs from remote nodes"
+  fetch:
+    src: "/home/{{ open_vpn_user }}/client1.req"
+    dest: "fetched/client/{{ inventory_hostname }}.req"
+    flat: yes
+    
+- name: "[local] Importing client certificate reqs"
+  delegate_to: localhost
+  command:
+    cmd: "{{ easy_rsa_local_path }}/easy-rsa/easyrsa import-req fetched/client/{{ item }}.req c-{{ item }}"
+  loop: "{{ groups['servers'] }}"
+  
+- name: "[local] Signing certificate reqs"
+  delegate_to: localhost
+  expect:
+    command: "{{ easy_rsa_local_path }}/easy-rsa/easyrsa sign-req client c-{{ item }}"
+    responses:
+      '  Confirm request details: ': 'yes'
+  loop: "{{ groups['servers'] }}"
+  
+- name: "[servers] Copying signed client certificates to remote hosts"
+  become: yes
+  become_user: "{{ open_vpn_user }}"
+  copy:
+    src: "{{ easy_rsa_local_path }}/easy-rsa/pki/issued/c-{{ item }}.crt"
+    dest: "/home/{{ open_vpn_user }}/client-configs/keys/client1.crt"
+  loop: "{{ groups['servers'] }}"
+  
+- name: "[servers] Copying ca.crt for client config"
+  become: yes
+  become_user: "{{ open_vpn_user }}"
+  copy:
+    src: "/etc/openvpn/ca.crt"
+    dest: "/home/{{ open_vpn_user }}/client-configs/keys/"
+    remote_src: yes
+    
+- name: "[servers] Copying ta.key for client config"
+  become: yes
+  become_user: "{{ open_vpn_user }}"
+  copy:
+    src: "/etc/openvpn/ta.key"
+    dest: "/home/{{ open_vpn_user }}/client-configs/keys/"
+    remote_src: yes

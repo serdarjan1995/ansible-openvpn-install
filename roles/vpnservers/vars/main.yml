@@ -1,0 +1,7 @@
+---
+open_vpn_version: release/2.5
+open_vpn_user: openvpn-user
+easy_rsa_link: https://github.com/OpenVPN/easy-rsa/releases/download/v3.0.8/EasyRSA-3.0.8.tgz
+easy_rsa_arhive_name: easy-rsa.tgz
+easy_rsa_vars: easy-rsa-vars
+easy_rsa_local_path: /opt
