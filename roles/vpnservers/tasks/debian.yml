@@ -1,4 +1,16 @@
 ---
+- name: Install pip
+  become: yes
+  apt:
+    update_cache: yes
+    name:
+      - python3-pip
+
+- name: Install pexpect
+  become: yes
+  pip:
+    name: pexpect
+        
 - name: "[servers] Add apt package signing key for OpenVpn"
   become: yes
   apt_key:
@@ -89,6 +101,7 @@
   copy:
     src: "{{ easy_rsa_local_path }}/easy-rsa/pki/ca.crt"
     dest: /etc/openvpn/
+    mode: '0664'
 
 - name: "[servers] Create directory easy-rsa"
   become: yes
@@ -149,6 +162,7 @@
   copy:
     src: "/home/{{ open_vpn_user }}/easy-rsa/pki/private/server.key"
     dest: /etc/openvpn/
+    mode: '0660'
     remote_src: yes
     
 - name: "[servers] Prepare server reqs"
@@ -168,29 +182,35 @@
 - name: "[local] Importing certificate reqs"
   delegate_to: localhost
   command:
-    cmd: "{{ easy_rsa_local_path }}/easy-rsa/easyrsa import-req fetched/server/{{ item }}.req {{ item }}"
-  loop: "{{ groups['servers'] }}"
+    cmd: "{{ easy_rsa_local_path }}/easy-rsa/easyrsa import-req fetched/server/{{ inventory_hostname }}.req {{ inventory_hostname }}"
   
 - name: "[local] Signing certificate reqs"
   delegate_to: localhost
   expect:
-    command: "{{ easy_rsa_local_path }}/easy-rsa/easyrsa sign-req server {{ item }}"
+    command: "{{ easy_rsa_local_path }}/easy-rsa/easyrsa sign-req server {{ inventory_hostname }}"
     responses:
       '  Confirm request details: ': 'yes'
-  loop: "{{ groups['servers'] }}"
   
 - name: "[servers] Copying signed server certificates to remote hosts"
   become: yes
   become_user: "{{ open_vpn_user }}"
   copy:
-    src: "{{ easy_rsa_local_path }}/easy-rsa/pki/issued/{{ item }}.crt"
+    src: "{{ easy_rsa_local_path }}/easy-rsa/pki/issued/{{ inventory_hostname }}.crt"
     dest: /etc/openvpn/server.crt
-  loop: "{{ groups['servers'] }}"
+    mode: '0664'
   
 - name: "[servers] Generating Diffie-Hellman params"
   become: yes
   become_user: "{{ open_vpn_user }}"
   command: "/home/{{ open_vpn_user }}/easy-rsa/easyrsa gen-dh"
+  
+- name: "[servers] Copying Diffie-Hellman params to /etc/openvpn/"
+  become: yes
+  become_user: "{{ open_vpn_user }}"
+  copy:
+    src: "/home/{{ open_vpn_user }}/easy-rsa/pki/dh.pem"
+    dest: /etc/openvpn/
+    remote_src: yes
   
 - name: "[servers] Generating HMAC signature for TLS integrity verification"
   become: yes
@@ -241,37 +261,141 @@
 - name: "[local] Importing client certificate reqs"
   delegate_to: localhost
   command:
-    cmd: "{{ easy_rsa_local_path }}/easy-rsa/easyrsa import-req fetched/client/{{ item }}.req c-{{ item }}"
-  loop: "{{ groups['servers'] }}"
+    cmd: "{{ easy_rsa_local_path }}/easy-rsa/easyrsa import-req fetched/client/{{ inventory_hostname }}.req c-{{ inventory_hostname }}"
   
 - name: "[local] Signing certificate reqs"
   delegate_to: localhost
   expect:
-    command: "{{ easy_rsa_local_path }}/easy-rsa/easyrsa sign-req client c-{{ item }}"
+    command: "{{ easy_rsa_local_path }}/easy-rsa/easyrsa sign-req client c-{{ inventory_hostname }}"
     responses:
       '  Confirm request details: ': 'yes'
-  loop: "{{ groups['servers'] }}"
   
 - name: "[servers] Copying signed client certificates to remote hosts"
   become: yes
   become_user: "{{ open_vpn_user }}"
   copy:
-    src: "{{ easy_rsa_local_path }}/easy-rsa/pki/issued/c-{{ item }}.crt"
+    src: "{{ easy_rsa_local_path }}/easy-rsa/pki/issued/c-{{ inventory_hostname }}.crt"
     dest: "/home/{{ open_vpn_user }}/client-configs/keys/client1.crt"
-  loop: "{{ groups['servers'] }}"
+    mode: '0664'
   
-- name: "[servers] Copying ca.crt for client config"
+- name: "[servers] Copying ca.crt to client config"
   become: yes
   become_user: "{{ open_vpn_user }}"
   copy:
     src: "/etc/openvpn/ca.crt"
     dest: "/home/{{ open_vpn_user }}/client-configs/keys/"
+    mode: '0664'
     remote_src: yes
     
-- name: "[servers] Copying ta.key for client config"
+- name: "[servers] Copying ta.key to client config"
   become: yes
   become_user: "{{ open_vpn_user }}"
   copy:
     src: "/etc/openvpn/ta.key"
     dest: "/home/{{ open_vpn_user }}/client-configs/keys/"
+    mode: '0664'
     remote_src: yes
+    
+- name: "[servers] Copying {{ make_openvpn_config }} openvpn config making script to remote hosts"
+  become: yes
+  become_user: "{{ open_vpn_user }}"
+  copy:
+    src: "{{ make_openvpn_config }}"
+    dest: "/home/{{ open_vpn_user }}/"
+    mode: '0774'
+    
+- name: "[servers] Copying {{ user_key_check_script }} username checking script to remote hosts"
+  become: yes
+  become_user: "{{ open_vpn_user }}"
+  template:
+    src: "{{ user_key_check_script }}.j2"
+    dest: "/etc/openvpn/{{ user_key_check_script }}"
+    mode: '0775'
+    
+- name: "[servers] Creating openvpn server config file"
+  become: yes
+  become_user: "{{ open_vpn_user }}"
+  shell: "/home/{{ open_vpn_user }}/{{ make_openvpn_config }} -t server -i {{ item.0 }} -m 255.255.255.0 -l {{ item.1 }} -p {{ item.2 }} -u {{user_key_check_script}} -o /etc/openvpn/server-{{ item.1 }}.conf"
+  with_together:
+    - "{{ openvpn_server_ip_pool }}"
+    - "{{ openvpn_ports }}"
+    - "{{ openvpn_protocols }}"
+    
+- name: "[servers] Starting openvpn services"
+  become: yes
+  shell: "systemctl start openvpn@server-{{ item }} && systemctl enable openvpn@server-{{ item }}"
+  loop: "{{ openvpn_ports }}"
+
+- name: "[servers] Creating openvpn client config file"
+  become: yes
+  become_user: "{{ open_vpn_user }}"
+  shell: "/home/{{ open_vpn_user }}/{{ make_openvpn_config }} -t client -c /home/{{ open_vpn_user }}/client-configs/keys/client1.crt -k /home/{{ open_vpn_user }}/client-configs/keys/client1.key -a /home/{{ open_vpn_user }}/client-configs/keys/ca.crt -s /home/{{ open_vpn_user }}/client-configs/keys/ta.key -i $(curl -s  ifconfig.me)  -l {{ item.0 }} -p {{ item.1 }} -u /etc/openvpn/{{user_key_check_script}} -o /home/{{ open_vpn_user }}/client1-{{ item.0 }}.ovpn"
+  with_together:
+    - "{{ openvpn_ports }}"
+    - "{{ openvpn_protocols }}"
+
+- name: "[local] Fetching client connection configs"
+  fetch:
+    src: "/home/{{ open_vpn_user }}/client1-{{ item }}.ovpn"
+    dest: "fetched/client-connections/{{ inventory_hostname }}-client{{ item }}.ovpn"
+    flat: yes
+  loop: "{{ openvpn_ports }}"
+
+- name: "[servers] Enabling system packet forwarding"
+  become: yes
+  lineinfile:
+    path: /etc/sysctl.conf
+    regexp: '^#net\.ipv4\.ip_forward=1'
+    line: "net.ipv4.ip_forward=1"
+
+- name: "[servers] Reloadling sysctl to process new rules"
+  become: yes
+  command: "sysctl -p"
+    
+- name: "[servers] Enabling ufw packet forwarding"
+  become: yes
+  lineinfile:
+    path: /etc/default/ufw
+    regexp: '^DEFAULT_FORWARD_POLICY="DROP"'
+    line: "DEFAULT_FORWARD_POLICY=\"ACCEPT\""
+    
+- name: "[servers] Adding new ufw postrouting rules"
+  become: yes
+  shell: "echo \"\n*nat\n:POSTROUTING ACCEPT [0:0]\n-A POSTROUTING -s {{ openvpn_server_ip_pool[0] }}/16 -o $(ip route | grep default | awk '{print $5}') -j MASQUERADE\nCOMMIT\n\" >> /etc/ufw/before.rules"
+
+- name: "[servers] Adding new ufw rule to allow ssh connections"
+  become: yes
+  ufw:
+    rule: allow
+    name: OpenSSH
+    
+- name: "[servers] Adding new ufw rules to allow openvpn ports connections"
+  become: yes
+  ufw:
+    rule: allow
+    port: "{{ item.0 }}"
+    proto: "{{ item.1 }}"
+  with_together:
+    - "{{ openvpn_ports }}"
+    - "{{ openvpn_protocols }}"
+    
+- name: "[servers] Reload ufw"
+  become: yes
+  ufw:
+    state: reloaded
+    
+- name: "[servers] Enable ufw"
+  become: yes
+  ufw:
+    state: enabled
+
+- name: "[local] Add servers to backend api"
+  local_action: "command python3 ./{{ add_servers_to_backend_api }} -f fetched/client-connections/{{ inventory_hostname }}-client{{ item }}.ovpn -u {{ backend_server_url_base }} -a {{ backend_server_api_token }} -p {{ vpn_servers_premium }}"
+  with_items:
+    - "{{ openvpn_ports }}"
+
+- name: "[all] Done"
+  debug:
+    msg:
+    - "All done!"
+    - "Check fetched/client-connections/ directory to get openvpn client connection files"

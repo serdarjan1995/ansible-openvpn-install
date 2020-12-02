@@ -1,0 +1,42 @@
+#!/usr/bin/python3
+
+import sys
+import requests
+import json
+
+auth_token = "{{ backend_server_api_token }}"
+url_base = "{{ backend_server_url_base }}"
+check_premium = {{ vpn_servers_premium }}
+
+def main(argv):
+    access = False
+    headers = {
+        'Authorization': 'Token ' + auth_token
+        }
+    username = ''
+    with open(argv[0]) as i_file:
+        username = i_file.readline()
+        #print(repr(username))
+    if username != '':
+        url = url_base + '/users/get_by_user_id/'
+        resp = requests.post(url, data={'user_id': username[0:-1]}, headers=headers, verify=False)
+        if resp.status_code == 200:
+            resp_json = json.loads(resp.text)
+            is_premium = resp_json['is_premium']
+            if check_premium:
+                access = is_premium
+            else:
+                access = True
+    print('Access', access, username)
+    return access
+
+if __name__ == "__main__":
+    try:
+        give_access = main(sys.argv[1:])
+        if(give_access):
+            sys.exit(0)
+        else:
+            sys.exit(1)
+    except Exception as e:
+        print(repr(e))
+        sys.exit(1)
