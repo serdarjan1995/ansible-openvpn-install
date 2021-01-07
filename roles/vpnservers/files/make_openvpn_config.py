@@ -3,8 +3,7 @@ import argparse
 
 SCRIPT_DESC = "Python script to create openvpn config"
 
-SERVER_CONFIG_TEMP = """
-port {port}
+SERVER_CONFIG_TEMP = """port {port}
 proto {protocol}
 dev tun
 ca ca.crt
@@ -21,8 +20,6 @@ push "dhcp-option DNS 208.67.222.222"
 push "dhcp-option DNS 208.67.220.220"
 keepalive 10 90
 cipher AES-256-CBC
-data-ciphers AES-256-GCM:AES-128-GCM
-data-ciphers-fallback AES-256-CBC
 auth SHA256
 compress lz4-v2
 push "compress lz4-v2"
@@ -39,8 +36,7 @@ script-security 2
 auth-user-pass-verify {username_check} via-file
 """
 
-CLIENT_CONFIG_TEMP = """
-client
+CLIENT_CONFIG_TEMP = """client
 dev tun
 proto {protocol}
 remote {ip} {port}
@@ -52,8 +48,6 @@ persist-key
 persist-tun
 remote-cert-tls server
 cipher AES-256-CBC
-data-ciphers AES-256-GCM:AES-128-GCM
-data-ciphers-fallback AES-256-CBC
 auth SHA256
 comp-lzo
 verb 3
@@ -80,25 +74,32 @@ def main(args):
     port = args.listen_port
     protocol = args.protocol
     output = args.output
+    version = args.version
     if config_type == 'server':
         ip = args.ip
         mask = args.mask
         username_check = args.username_check
+        config = SERVER_CONFIG_TEMP
+        if version == '2.5':
+            config += "data-ciphers AES-256-GCM:AES-128-GCM\ndata-ciphers-fallback AES-256-CBC"
         with open(output, 'w') as o_file:
-            o_file.write(SERVER_CONFIG_TEMP.format(ip=ip,
-                                                   mask=mask,
-                                                   username_check=username_check,
-                                                   port=port,
-                                                   protocol=protocol))
+            o_file.write(config.format(ip=ip,
+                                       mask=mask,
+                                       username_check=username_check,
+                                       port=port,
+                                       protocol=protocol))
     elif config_type == 'client':
         cert = args.cert
         key = args.key
         ca = args.cert_authority
         ta = args.tls_auth
+        config = CLIENT_CONFIG_TEMP
+        if version == '2.5':
+            config += "data-ciphers AES-256-GCM:AES-128-GCM\ndata-ciphers-fallback AES-256-CBC"
         
-        config = CLIENT_CONFIG_TEMP.format(ip=ip,
-                                           port=port,
-                                           protocol=protocol)
+        config = config.format(ip=ip,
+                               port=port,
+                               protocol=protocol)
         if protocol == 'udp':
             config = config + '\nexplicit-exit-notify 1'
         
@@ -158,4 +159,6 @@ if __name__ == "__main__":
                         help='username check script')
     parser.add_argument('-o', '--output', type=str, required=True,
                         help='output filename')
+    parser.add_argument('-v', '--version', type=str, default='2.4',
+                        help='OpenVpn version, default=2.4')
     main(parser.parse_args())

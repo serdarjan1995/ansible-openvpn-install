@@ -1,5 +1,5 @@
 ---
-open_vpn_version: release/2.5
+open_vpn_version: release/2.4
 open_vpn_user: openvpn-user
 easy_rsa_link: https://github.com/OpenVPN/easy-rsa/releases/download/v3.0.8/EasyRSA-3.0.8.tgz
 easy_rsa_arhive_name: easy-rsa.tgz
@@ -9,17 +9,21 @@ user_key_check_script: check_vpnuser.py
 make_openvpn_config: make_openvpn_config.py
 add_servers_to_backend_api: add_servers_to_backend_api.py
 openvpn_ports:
-  - 443
-  - 6123
-  - 10025
+  - 5555
+  - 5556
+#  - 10025
 openvpn_protocols:
-  - tcp
-  - tcp
   - udp
+  - udp
+#  - udp
 openvpn_server_ip_pool:
   - 10.8.0.0
   - 10.8.1.0
-  - 10.8.2.0
-backend_server_url_base: https://104.131.71.239
-backend_server_api_token: c210bf13e73dc936ded65d989c1fdb43c276c6f9
-vpn_servers_premium: True
+#  - 10.8.2.0
+backend_server_url_base: https://apiapi.api
+backend_server_api_token: testtest
+vpn_servers_premium: False
+traffic_control_script: traffic_control.sh
+mark_packets_script: mark_packets.sh
+free_servers_upload_max_speed: 2mbit
+free_servers_download_max_speed: 4mbit

@@ -216,6 +216,13 @@
   become: yes
   become_user: "{{ open_vpn_user }}"
   command: openvpn --genkey secret /etc/openvpn/ta.key
+  when: open_vpn_version == "release/2.5"
+
+- name: "[servers] Generating HMAC signature for TLS integrity verification"
+  become: yes
+  become_user: "{{ open_vpn_user }}"
+  command: openvpn --genkey --secret /etc/openvpn/ta.key
+  when: open_vpn_version == "release/2.4"
 
 - name: "[servers] Create client-configs directory"
   become: yes
@@ -388,6 +395,37 @@
   become: yes
   ufw:
     state: enabled
+
+- name: "[servers] Uploading {{ traffic_control_script }} script for bandwidth limit"
+  become: yes
+  copy:
+    src: "{{ traffic_control_script }}"
+    dest: "/opt/"
+    mode: '0700'
+  when: not vpn_servers_premium
+
+- name: "[servers] Uploading {{ mark_packets_script }} script for bandwidth limit"
+  become: yes
+  copy:
+    src: "{{ mark_packets_script }}"
+    dest: "/opt/"
+    mode: '0700'
+  when: not vpn_servers_premium
+
+- name: "[servers] Setting max upload speed (Free servers upload bandwidth) {{free_servers_upload_max_speed}}"
+  become: yes
+  shell: "ip route | grep default | awk '{print $5}' > /opt/default.txt; /opt/{{ traffic_control_script }} /opt/default.txt {{free_servers_upload_max_speed}}"
+  when: not vpn_servers_premium
+
+- name: "[servers] Setting max download speed (Free servers upload bandwidth) {{free_servers_download_max_speed}}"
+  become: yes
+  shell: "ifconfig | grep tun | awk '{print $1}' | sed 's/://g' > /opt/interfaces.txt; /opt/{{ traffic_control_script }} /opt/interfaces.txt {{free_servers_download_max_speed}}"
+  when: not vpn_servers_premium
+
+- name: "[servers] Marking packets for traffic control"
+  become: yes
+  shell: "/opt/{{ mark_packets_script }} /opt/interfaces.txt"
+  when: not vpn_servers_premium 
 
 - name: "[local] Add servers to backend api"
   local_action: "command python3 ./{{ add_servers_to_backend_api }} -f fetched/client-connections/{{ inventory_hostname }}-client{{ item }}.ovpn -u {{ backend_server_url_base }} -a {{ backend_server_api_token }} -p {{ vpn_servers_premium }}"

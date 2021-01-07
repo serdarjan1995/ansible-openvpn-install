@@ -9,14 +9,23 @@ import argparse
 SCRIPT_DESC = "Python script for converting .ovpn configs to json format and "
 SCRIPT_DESC += "posting to backend api"
 IPSTACK_APIKEY = '18ee3005da87fb8725d51d8323710904'
-VERIFY_SSL = False
+VERIFY_SSL = True
+
+def str2bool(v):
+    if isinstance(v, bool):
+       return v
+    if v.lower() in ('yes', 'true', 't', 'y', '1'):
+        return True
+    elif v.lower() in ('no', 'false', 'f', 'n', '0'):
+        return False
+    else:
+        raise argparse.ArgumentTypeError('Boolean value expected.')
 
 def main(args):
     filename = args.file
     premium = args.premium
     url_base = args.url
     auth_token = args.auth_token
-    
     if url_base[-1] == '/':
         url_base = url_base[0:-1]
     
@@ -70,15 +79,15 @@ def main(args):
             resp = requests.post(url, data={'ip': ip,
                                             'country': ipstack_resp_json['country_code'],
                                             'city': ipstack_resp_json['region_name'],
-                                            'free': premium}, headers=headers, verify=VERIFY_SSL)
+                                            'free': not premium}, headers=headers, verify=VERIFY_SSL)
             print('Creating server ', ip, ' ............... ', resp.status_code)
             if resp.status_code > 201:
                 sys.exit(resp.content)  
         for port in servers[ip].keys():
             url = url_base + '/servers/' + ip + '/instances/'
             resp = requests.post(url, data={'port': port,
-                                            'protocol': servers[ip][port]['proto'],
-                                            'auth': True}, headers=headers, verify=VERIFY_SSL)
+                                            'protocol': servers[ip][port]['proto']},
+                                            headers=headers, verify=VERIFY_SSL)
             print('---Creating instance ', port, ' ........ ', resp.status_code)
             if resp.status_code > 201:
                 sys.exit(resp.content)  
@@ -104,10 +113,10 @@ if __name__ == "__main__":
                         help='.ovpn config file input path\n')
     parser.add_argument('-u', '--url', type=str, required=True,
                         help='Url base to post converted to json format configs\n'+
-                        'Example: https://tenorvpn.com')
+                        'Example: https://test.com')
     parser.add_argument('-a', '--auth-token', type=str, required=True,
                         help='Server authentication token')
-    parser.add_argument('-p', '--premium', type=bool,
+    parser.add_argument('-p', '--premium', type=str2bool,
                         default=True,
                         help='Mark servers as premium\n' +
                              'Default: True')
